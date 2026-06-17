@@ -21,6 +21,15 @@ class BaseSelector(ABC):
     def select(self, train_dataset, val_dataset=None):
         """Return a list of selected example indices into ``train_dataset``."""
 
+    def make_trainer(self, cfg, model, tokenizer, train_dataset, val_dataset):
+        """Optionally build a custom trainer for this method, else ``None``.
+
+        Offline selectors return ``None`` and let the generic Trainer fine-tune
+        on the selected subset. Online methods (e.g. ADAPT) override this to
+        inject per-step reweighting into the optimization loop.
+        """
+        return None
+
     # ---- helpers for subclasses -------------------------------------------
 
     def _budget_to_k(self, n):

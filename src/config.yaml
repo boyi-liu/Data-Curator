@@ -30,6 +30,7 @@ lora:
 
 # ---- Dataset ----
 # `name` selects the loader module dataset/load_<name>.py
+#   a   -> single JSONL (dataset/load_a.py)
 dataset:
   name: a
   data_dir: ./data

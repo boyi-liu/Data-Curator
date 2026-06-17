@@ -5,3 +5,7 @@ peft>=0.10
 accelerate>=0.29
 numpy
 pyyaml
+tqdm
+
+# Only needed by the embedding-based selectors (alg/miwv.py)
+sentence-transformers>=2.6

@@ -7,14 +7,11 @@ Enable with ``--method random``.
 
 import numpy as np
 
-from selector.base import BaseSelector
+from alg.base import BaseSelector
 
 
-class RandomSelector(BaseSelector):
+class Selector(BaseSelector):
     def select(self, train_dataset, val_dataset=None):
         rng = np.random.default_rng(self.cfg.seed)
         k = self._budget_to_k(len(train_dataset))
         return sorted(rng.choice(len(train_dataset), size=k, replace=False).tolist())
-
-
-SELECTOR = RandomSelector

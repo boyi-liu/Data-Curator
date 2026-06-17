@@ -41,14 +41,9 @@ from typing import List, Optional, Tuple
 import numpy as np
 import torch
 
-from selector.base import BaseSelector
+from alg.base import BaseSelector
 from utils.model_utils import maybe_wrap_lora
-
-try:  # optional progress bars
-    from tqdm.auto import tqdm
-except ImportError:  # pragma: no cover
-    def tqdm(it, **_):
-        return it
+from utils.selector_utils import model_inputs, tqdm
 
 
 @dataclass
@@ -108,7 +103,7 @@ class _GradientProjector:
         return out
 
 
-class LESSSelector(BaseSelector):
+class Selector(BaseSelector):
     ADAM_BETA1 = 0.9
     ADAM_BETA2 = 0.999
     ADAM_EPS = 1e-8
@@ -262,13 +257,6 @@ class LESSSelector(BaseSelector):
         v = self.ADAM_BETA2 * exp_avg_sq + (1 - self.ADAM_BETA2) * grad ** 2
         return m / (torch.sqrt(v) + self.ADAM_EPS)
 
-    def _example_inputs(self, example):
-        return {
-            "input_ids": torch.tensor(example["input_ids"], device=self.device).unsqueeze(0),
-            "attention_mask": torch.tensor(example["attention_mask"], device=self.device).unsqueeze(0),
-            "labels": torch.tensor(example["labels"], device=self.device).unsqueeze(0),
-        }
-
     def _flat_grad(self):
         chunks = []
         for p in self._params:
@@ -284,7 +272,7 @@ class LESSSelector(BaseSelector):
         feats = np.empty((len(dataset), self.proj_dim), dtype=np.float32)
         for i in tqdm(range(len(dataset)), desc=f"LESS {tag}"):
             self.model.zero_grad(set_to_none=True)
-            loss = self.model(**self._example_inputs(dataset[i])).loss
+            loss = self.model(**model_inputs(dataset[i], self.device)).loss
             loss.backward()
 
             grad = self._flat_grad()
@@ -324,6 +312,3 @@ def add_args(parser):
     group.add_argument("--max-dense-proj", type=int, default=10 ** 8,
                        dest="selection.max_dense_proj",
                        help="Build a dense projection matrix below this many elements.")
-
-
-SELECTOR = LESSSelector
