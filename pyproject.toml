@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-finetune-data-curator"
+version = "0.1.0"
+description = "Data selection and curation toolkit for LLM instruction fine-tuning"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "boyi-liu", email = "byliu0325@gmail.com" }]
+keywords = ["llm", "instruction-tuning", "data-selection", "data-curation"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Runtime dependencies (kept in sync with src/requirements.txt).
+dependencies = [
+    "torch>=2.1",
+    "transformers>=4.40",
+    "datasets>=2.18",
+    "peft>=0.10",
+    "accelerate>=0.29",
+    "numpy",
+    "pyyaml",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+# Only needed by the embedding-based selectors (alg/miwv.py).
+embed = ["sentence-transformers>=2.6"]
+
+[project.urls]
+Repository = "https://github.com/boyi-liu/LLM-Finetune-Data-Curator"
+
+[project.scripts]
+# Exposes `data-curator ...` as a shortcut for `python src/main.py ...`.
+data-curator = "main:main"
+
+# ---- Packaging (flat layout under src/) ----
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["config.yaml"]
+
+# ---- uv 配置:索引源 ----
+
+# 默认源走国内镜像(普通包加速)
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+# PyTorch CUDA 12.8 专用源
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# 指定 torch 系列从 pytorch 源拉
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
