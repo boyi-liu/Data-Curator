@@ -1,54 +1,38 @@
-"""Build the LESS four-dataset instruction-tuning mixture.
+"""LESS four-dataset mixture -- prepare and load in one module.
 
-Reproduces the training pool used by
+Reproduces the FLAN V2 + CoT + Dolly + OpenAssistant1 training pool used by
 
   * LESS: Selecting Influential Data for Targeted Instruction Tuning
     (Xia et al., 2024)
   * Rethinking Data Curation in LLM Training: Online Reweighting Offers
     Better Generalization than Offline Methods
 
-namely a mix of **FLAN V2**, **CoT**, **Dolly** and **OpenAssistant1**.
+Both build on the open-instruct / Tulu pre-processing, where each source is a
+uniform ``messages`` record::
 
-Both papers build on the open-instruct / Tulu pre-processing, where each source
-is reformatted into a uniform ``messages`` record::
-
-    {"dataset": "flan_v2",
-     "id": "flan_v2_42",
+    {"dataset": "flan_v2", "id": "flan_v2_42",
      "messages": [{"role": "user", "content": "..."},
                   {"role": "assistant", "content": "..."}]}
 
-This script consumes those four ``{name}_data.jsonl`` files, flattens each into
-the framework's ``{"instruction", "input", "output"}`` schema (see
-``dataset/formatting.py``), subsamples every source by ``--sample_percentage``
-with a fixed ``--seed`` (LESS uses 5% / seed 3 for the warmup model), shuffles
-the union, and writes a single ``less.jsonl``.
+This module consumes the four ``{name}_data.jsonl`` files, flattens each into
+``{"instruction", "input", "output"}``, subsamples every source, shuffles the
+union, and caches it as ``{data_dir}/less.jsonl``.
+
+As a library (the registry calls this): ``load(cfg, tokenizer)`` builds that
+cache on first use, then tokenizes it. Because the four source files have no
+clean Hub mirror, point ``dataset.processed_dir`` at the directory holding them
+(``-o dataset.processed_dir=./raw``); ``load`` raises if it is unset and the
+cache is missing. Select with ``cfg.dataset.name = less``.
+
+As a script: ``python -m dataset.load_less --processed_dir ./raw
+[--sample_percentage 0.05] [--seed 3] [--output ...]``.
 
 Getting the processed source files
 ----------------------------------
 The four ``*_data.jsonl`` files are produced by open-instruct's
-``reformat_datasets.py`` (run via ``scripts/data/prepare_train_data.sh``), and
-are exactly what the LESS repo ships under ``data/train/processed``::
-
-    data/train/processed/
-      flan_v2/flan_v2_data.jsonl
-      cot/cot_data.jsonl
-      dolly/dolly_data.jsonl
-      oasst1/oasst1_data.jsonl
-
-Point ``--processed_dir`` at a directory holding the four ``{name}_data.jsonl``
-files (flat or in per-dataset subfolders -- both layouts are searched).
-
-Usage
------
-    # full mixture
-    python -m dataset.generate_less --processed_dir ./raw --output ./data/less.jsonl
-
-    # LESS warmup pool: 5% of each source, seed 3
-    python -m dataset.generate_less --processed_dir ./raw \
-        --sample_percentage 0.05 --seed 3 --output ./data/less.jsonl
-
-Then train on it via the existing loader, e.g. point ``dataset.load_a`` at the
-written file or add a ``load_less`` that reads ``less.jsonl``.
+``reformat_datasets.py`` and ship with the LESS repo under
+``data/train/processed`` (flat ``{name}_data.jsonl`` or ``{name}/{name}_data.jsonl``
+layouts are both searched).
 """
 
 import argparse
@@ -56,7 +40,12 @@ import json
 import os
 import random
 
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+from dataset._common import subsample, tokenize_split, write_jsonl
+
 DATASETS = ["flan_v2", "cot", "dolly", "oasst1"]
+FILENAME = "less.jsonl"
 
 
 # --------------------------------------------------------------------------- #
@@ -101,7 +90,7 @@ def messages_to_record(messages):
 
 
 # --------------------------------------------------------------------------- #
-# source readers
+# source reading & mixing
 # --------------------------------------------------------------------------- #
 def _find_processed_file(processed_dir, name):
     """Locate ``{name}_data.jsonl`` in a flat or per-dataset-subfolder layout."""
@@ -135,71 +124,70 @@ def read_processed(processed_dir, name):
                 yield record
 
 
-# --------------------------------------------------------------------------- #
-# mixing
-# --------------------------------------------------------------------------- #
-def subsample(records, percentage, rng):
-    """Randomly keep ``percentage`` of ``records``."""
-    if percentage < 1.0:
-        k = int(round(len(records) * percentage))
-        if k < len(records):
-            return rng.sample(records, k)
-    return list(records)
+def build_records(processed_dir, datasets=DATASETS, sample_percentage=1.0, seed=3):
+    """Read, subsample, tag and shuffle the four sources; return the mixture.
 
-
-def build_mixture(args):
-    rng = random.Random(args.seed)
+    Also returns per-source ``{name: (available, kept)}`` stats.
+    """
     combined = []
     stats = {}
-    for name in args.datasets:
-        records = list(read_processed(args.processed_dir, name))
-        kept = subsample(records, args.sample_percentage, rng)
+    for name in datasets:
+        records = list(read_processed(processed_dir, name))
+        kept = subsample(records, sample_percentage, seed)
         for r in kept:
             r["dataset"] = name
         stats[name] = (len(records), len(kept))
         combined.extend(kept)
-
-    rng.shuffle(combined)
+    random.Random(seed).shuffle(combined)
     return combined, stats
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument(
-        "--processed_dir",
-        default="./raw",
-        help="Directory with the four Tulu-format {name}_data.jsonl files.",
-    )
-    parser.add_argument("--output", default="./data/less.jsonl", help="Output JSONL path.")
-    parser.add_argument(
-        "--datasets",
-        nargs="+",
-        default=DATASETS,
-        choices=DATASETS,
-        help="Subset of sources to mix (default: all four).",
-    )
-    parser.add_argument(
-        "--sample_percentage",
-        type=float,
-        default=1.0,
-        help="Fraction of each source to keep (LESS warmup uses 0.05).",
-    )
-    parser.add_argument("--seed", type=int, default=3, help="Subsample/shuffle seed (LESS uses 3).")
-    args = parser.parse_args()
+def prepare(cfg):
+    """Build ``{data_dir}/less.jsonl`` if missing; return its path."""
+    path = os.path.join(cfg.dataset.data_dir, FILENAME)
+    if not os.path.exists(path):
+        processed_dir = cfg.dataset.processed_dir
+        if not processed_dir:
+            raise FileNotFoundError(
+                f"{path} not found and dataset.processed_dir is unset. Point it at the "
+                "four Tulu {name}_data.jsonl files (-o dataset.processed_dir=./raw), or "
+                f"pre-build with `python -m dataset.load_less --processed_dir <dir> --output {path}`."
+            )
+        records, _ = build_records(
+            processed_dir,
+            sample_percentage=cfg.dataset.sample_percentage or 1.0,
+            seed=cfg.seed,
+        )
+        write_jsonl(records, path)
+        print(f"[less] wrote {len(records)} examples to {path}")
+    return path
 
-    combined, stats = build_mixture(args)
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
-    with open(args.output, "w", encoding="utf-8") as f:
-        for record in combined:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+def load(cfg, tokenizer):
+    return tokenize_split(cfg, tokenizer, prepare(cfg))
 
-    print(f"Wrote {len(combined)} examples to {args.output}")
+
+def _cli():
+    p = argparse.ArgumentParser(description="Build the LESS mixture JSONL.")
+    p.add_argument("--processed_dir", default="./raw",
+                   help="Directory with the four Tulu-format {name}_data.jsonl files.")
+    p.add_argument("--output", default=f"./data/{FILENAME}", help="Output JSONL path.")
+    p.add_argument("--datasets", nargs="+", default=DATASETS, choices=DATASETS,
+                   help="Subset of sources to mix (default: all four).")
+    p.add_argument("--sample_percentage", type=float, default=1.0,
+                   help="Fraction of each source to keep (LESS warmup uses 0.05).")
+    p.add_argument("--seed", type=int, default=3, help="Subsample/shuffle seed (LESS uses 3).")
+    a = p.parse_args()
+
+    records, stats = build_records(a.processed_dir, a.datasets, a.sample_percentage, a.seed)
+    write_jsonl(records, a.output)
+
+    print(f"Wrote {len(records)} examples to {a.output}")
     print(f"{'dataset':<12}{'available':>12}{'kept':>10}")
-    for name in args.datasets:
+    for name in a.datasets:
         avail, kept = stats[name]
         print(f"{name:<12}{avail:>12}{kept:>10}")
 
 
 if __name__ == "__main__":
-    main()
+    _cli()

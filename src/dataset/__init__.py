@@ -2,7 +2,10 @@
 
 Each dataset lives in its own module ``dataset/load_<name>.py`` exposing a
 ``load(cfg, tokenizer) -> {"train": Dataset, "validation": Dataset | None}``
-function. Selecting a dataset is just ``cfg.dataset.name``.
+function. That module also prepares the data: ``load`` builds
+``{data_dir}/<name>.jsonl`` on first use, and the module can be run as a script
+(``python -m dataset.load_<name>``) to (re)build the JSONL explicitly.
+Selecting a dataset is just ``cfg.dataset.name``.
 """
 
 import importlib
