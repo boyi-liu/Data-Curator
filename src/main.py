@@ -19,6 +19,7 @@ from utils.model_utils import load_model_and_tokenizer
 from utils.options import parse_args
 from utils.train_utils import set_seed, train as run_training
 
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 def _save_json(cfg, name, payload):
     os.makedirs(cfg.output_dir, exist_ok=True)
