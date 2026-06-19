@@ -128,7 +128,7 @@ class ADAPTReweighter:
         self.weight_norm = (sel.weight_norm or "mean").lower()
         self.w_min = float(sel.w_min if sel.w_min is not None else 0.0)
         self.w_max = float(sel.w_max if sel.w_max is not None else 10.0)
-        self.standardize = bool(sel.standardize_signal)
+        self.standardize = bool(sel.standardize_signal) 
 
         self.needs_hidden = self.signal == "embed"
         self.anchor_centroid = None        # (d,) float32, embed signal only
@@ -310,7 +310,7 @@ class Selector(BaseSelector):
         return list(range(len(train_dataset)))
 
     def make_trainer(self, cfg, model, tokenizer, train_dataset, val_dataset):
-        from utils.train_utils import build_training_args
+        from utils.train_utils import TRAINER_TOKENIZER_KW, build_training_args
 
         if val_dataset is None or len(val_dataset) == 0:
             raise ValueError("ADAPT requires a non-empty validation/anchor set.")
@@ -332,7 +332,7 @@ class Selector(BaseSelector):
         else:  # embed: initialize anchors from theta_0 before the first step
             reweighter.maybe_refresh(model, step=0)
 
-        args = build_training_args(cfg)
+        args = build_training_args(cfg, len(train_dataset))
         # Keep 'idx'/'text' alive so the collator can thread them.
         args.remove_unused_columns = False
         collator = _IdxCollator(
@@ -345,9 +345,9 @@ class Selector(BaseSelector):
             args=args,
             train_dataset=train_dataset,
             eval_dataset=val_dataset,
-            tokenizer=tokenizer,
             data_collator=collator,
             reweighter=reweighter,
+            **{TRAINER_TOKENIZER_KW: tokenizer},
         )
 
 
